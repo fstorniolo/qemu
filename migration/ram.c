@@ -58,6 +58,8 @@
 #include "multifd.h"
 #include "sysemu/runstate.h"
 
+#include "../chardev/char-ebpf.h"
+
 #include "hw/boards.h" /* for machine_dump_guest_core() */
 
 #if defined(__linux__)
@@ -3234,6 +3236,8 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
             }
         }
     }
+
+    DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
 
     ram_control_before_iterate(f, RAM_CONTROL_SETUP);
     ram_control_after_iterate(f, RAM_CONTROL_SETUP);

@@ -1,40 +1,8 @@
-#include "qemu/osdep.h"
+#include "char-ebpf.h"
 #include "qemu/sockets.h"
 #include "qemu/option.h"
 #include "qapi/error.h"
-#include "chardev/char.h"
-#include "chardev/char-fe.h"
-#include "chardev/char-fd.h"
-#include "chardev/char-io.h"
-#include "io/channel-buffer.h"
-#include "io/net-listener.h"
-#include "hw/misc/bpf_injection_msg.h"
 
-
-#define CHAR_EBPF_DEBUG 1
-
-#if CHAR_EBPF_DEBUG > 0
-#define DBG(fmt, ...) do { \
-        fprintf(stderr, "char-ebpf: " fmt "\n", ## __VA_ARGS__); \
-    } while (0)
-#else
-#define DBG(fmt, ...)
-#endif
-
-#define CHARDEV_BPF_BUF_LEN 4096
-
-#define MAX_SERVICES 10
-
-struct eBPFChardev {
-    FDChardev parent;
-    uint32_t last_byte_read;
-    QIONetListener *listener;
-    SocketAddress *addr;
-    uint8_t *buffer;
-    QIOChannel *sockets[MAX_SERVICES];
-
-};
-typedef struct eBPFChardev eBPFChardev;
 
 DECLARE_INSTANCE_CHECKER(eBPFChardev, EBPF_CHARDEV,
                          TYPE_CHARDEV_EBPF)
@@ -268,7 +236,11 @@ static void char_ebpf_open(Chardev *chr,
     FDChardev *s = FD_CHARDEV(chr);
 
     ChardevEbpf *device_backend = backend->u.ebpf.data;
+    eBPFChardev_instance = bpf;
+
     *be_opened = true;
+
+    DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
 
     s->ioc_in = QIO_CHANNEL(qio_channel_buffer_new(4096));
     bpf->listener = qio_net_listener_new();
@@ -292,6 +264,14 @@ static void char_ebpf_open(Chardev *chr,
         DBG("errore malloc!");
         return;
     }
+
+    bpf->migration_buffer = (uint8_t*)malloc(CHARDEV_MIGRATION_BUF_LEN);
+    if(!bpf->migration_buffer){
+        DBG("errore malloc!");
+        return;
+    }
+
+    bpf->migration_byte_to_read_index = bpf->migration_byte_to_write_index = 0;
 
     //Every accept tcp_chr_accept is called
     qio_net_listener_set_client_func(bpf->listener, tcp_chr_accept, bpf, NULL);
@@ -325,6 +305,22 @@ static void forward_data_to_service(Chardev *s, uint8_t service, const uint8_t *
 
 }
 
+static int write_into_migration_buffer(Chardev *s, const uint8_t *buf, int len)
+{
+    eBPFChardev *ebpf = EBPF_CHARDEV(s);
+
+    // TODO: handle wrap
+    if (ebpf->migration_byte_to_write_index + len  > CHARDEV_MIGRATION_BUF_LEN - 1){
+        DBG("Buffer overflow, return error");
+        return -1;
+    }
+
+    memcpy(ebpf->migration_buffer + ebpf->migration_byte_to_write_index, buf, len);
+    ebpf->migration_byte_to_write_index += len;
+
+    return len;
+}
+
 static int char_ebpf_write(Chardev *s, const uint8_t *buf, int len){
 
     struct bpf_injection_msg_header *header_ptr = (struct bpf_injection_msg_header *)buf;
@@ -347,6 +343,9 @@ static int char_ebpf_write(Chardev *s, const uint8_t *buf, int len){
         } else if(service == FIREWALL_TYPE){
             DBG("firewall");
             //firewall_op(newdev,payload,size);
+        } else if(service == MIGRATION_TYPE){
+            DBG("migration");
+            return write_into_migration_buffer(s, buf, len);
         }
 
     }

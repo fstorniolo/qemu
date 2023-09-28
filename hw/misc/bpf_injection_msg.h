@@ -21,6 +21,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#ifndef BPF_INJECTION_MSG_H
+#define BPF_INJECTION_MSG_H
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -53,9 +56,15 @@
 #define INJECTION_OK 	0
 #define INJECTION_FAIL 	1
 
+// services
 #define VCPU_PINNING_TYPE               1
 #define DYNAMIC_MEM_TYPE                2
 #define FIREWALL_TYPE                   3
+#define MIGRATION_TYPE					4
+
+#define UNMARKING_MIGRATION_OPERATION	0
+#define MARKING_MIGRATION_OPERATION		1
+
 
 // +----+---------+------+----------------+
 // | 0  | version | type | payload length |
@@ -94,31 +103,10 @@ struct cpu_affinity_infos_t {
 
 //cut
 
-struct bpf_injection_msg_t prepare_bpf_injection_message(const char* path){
-	struct bpf_injection_msg_t mymsg;
-	int len;
-	mymsg.header.version = DEFAULT_VERSION;
-	mymsg.header.type = PROGRAM_INJECTION;
-	FILE* fp = fopen(path, "r");
-	if(fp) {
-		fseek(fp, 0 , SEEK_END);
-		mymsg.header.payload_len = ftell(fp);
-	  	fseek(fp, 0 , SEEK_SET);// needed for next read from beginning of file
-	  	mymsg.payload = malloc(mymsg.header.payload_len);
-	  	len = fread(mymsg.payload, 1, mymsg.header.payload_len, fp);
-	  	// printf("readlen %d\n", len);
-	  	if(len != mymsg.header.payload_len) {
-	  		// printf("Error preparing the message\n");
-	  		mymsg.header.type = ERROR;
-	  		fclose(fp);
-	  		free(mymsg.payload);
-	  		return mymsg;
-	  	}
-	  fclose(fp);
-	}
-  	return mymsg;
-}
+struct migration_metadata_t {
+	uint64_t phys_addr;
+	uint64_t order;
+	uint64_t operation;
+};
 
-void print_bpf_injection_message(struct bpf_injection_msg_header myheader){
-	printf("  Version:%u\n  Type:%u\n  Payload_len:%u\n", myheader.version, myheader.type, myheader.payload_len);
-}
+#endif // BPF_INJECTION_MSG_H
