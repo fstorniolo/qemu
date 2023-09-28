@@ -41,6 +41,9 @@ static void hexdump(const void* data, size_t size){
 }
 
 */
+
+static struct eBPFChardev *eBPFChardev_instance;
+
 static void char_ebpf_parse(QemuOpts *opts, ChardevBackend *backend, Error **errp){
     DBG("parse! %d",backend->type);
     const char *port = qemu_opt_get(opts, "port");
@@ -224,6 +227,11 @@ static void tcp_chr_accept(QIONetListener *listener, QIOChannelSocket *cioc, voi
             ioc, G_IO_IN | G_IO_HUP | G_IO_ERR,
             ebpf_client_io, opaque, NULL);
 
+}
+
+struct eBPFChardev *get_ebpf_chardev(void)
+{
+    return eBPFChardev_instance;
 }
 
 static void char_ebpf_open(Chardev *chr,

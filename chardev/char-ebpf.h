@@ -39,6 +39,6 @@ struct eBPFChardev {
 };
 typedef struct eBPFChardev eBPFChardev;
 
-static struct eBPFChardev *eBPFChardev_instance = NULL;
+struct eBPFChardev* get_ebpf_chardev(void);
 
 #endif // CHAR_EBPF_H

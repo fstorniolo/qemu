@@ -3206,6 +3206,7 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     RAMState **rsp = opaque;
     RAMBlock *block;
     int ret;
+    eBPFChardev *eBPFChardev_instance;
 
     if (compress_threads_save_setup()) {
         return -1;
@@ -3237,6 +3238,7 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
         }
     }
 
+    eBPFChardev_instance = get_ebpf_chardev();
     DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
 
     ram_control_before_iterate(f, RAM_CONTROL_SETUP);
