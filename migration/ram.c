@@ -59,6 +59,9 @@
 #include "sysemu/runstate.h"
 
 #include "../chardev/char-ebpf.h"
+#include "accel/kvm/translate-gpa_2_hva.h"
+
+#include <stdlib.h>
 
 #include "hw/boards.h" /* for machine_dump_guest_core() */
 
@@ -3186,6 +3189,59 @@ void qemu_guest_free_page_hint(void *addr, size_t len)
     }
 }
 
+typedef struct {
+	uint64_t phys_addr;
+	uint64_t order;
+	uint64_t operation;
+} migration_metadata_t;
+
+static void optimize_setup_phase(eBPFChardev *p)
+{
+
+    DBG("Inside optimize_setup_phase");
+
+    DBG("Requesting thr_mutex_migration");
+    qemu_mutex_lock(&p->mutex_migration);
+    DBG("Inside thr_mutex_migration, waiting for condition");
+
+
+    while (!p->ready_to_migrate)
+        qemu_cond_wait(&p->cond_migration, &p->mutex_migration);
+
+    DBG("ready_to_migration true");
+
+    qemu_mutex_unlock(&p->mutex_migration);
+
+    DBG("Unlock mutex migration");
+    uint64_t counter =  *(uint64_t*)p->migration_buffer;
+
+    DBG("optimize_setup_phase: counter is %lu", counter);
+
+    migration_metadata_t *migration_metadata = (migration_metadata_t*)(p->migration_buffer + sizeof(uint64_t));
+    void *hva;
+
+    for(size_t i = 0; i < counter; i++){
+
+
+        hva = translate_gpa_2_hva(migration_metadata[i].phys_addr);
+        qemu_guest_free_page_hint(hva, (4 * 1024) << migration_metadata[i].order);
+    }
+
+    DBG("Computation ended");
+
+    // DBG_V("Requesting thr_mutex_end_1st_round_migration");
+
+    // qemu_mutex_lock(&newdev->thr_mutex_end_1st_round_migration);
+    // DBG_V("Inside thr_mutex_end_1st_round_migration");
+
+    // newdev->end_1st_round_migration = true;
+    // qemu_cond_signal(&newdev->thr_cond_end_1st_round_migration);
+    // qemu_mutex_unlock(&newdev->thr_mutex_end_1st_round_migration);
+
+    // DBG("Setup Migration Phase Ended, communicating it to the device \n");
+    // setup_migration_phase_ended();
+}
+
 /*
  * Each of ram_save_setup, ram_save_iterate and ram_save_complete has
  * long-running RCU critical section.  When rcu-reclaims in the code
@@ -3207,6 +3263,12 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     RAMBlock *block;
     int ret;
     eBPFChardev *eBPFChardev_instance;
+
+    struct bpf_injection_msg_header bpf_header;
+    uint8_t *message = NULL;
+    FILE *fp;
+
+    int bytes_read = 0;
 
     if (compress_threads_save_setup()) {
         return -1;
@@ -3238,9 +3300,59 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
         }
     }
 
+    // if (true)
+    //     goto iterate;
+
     eBPFChardev_instance = get_ebpf_chardev();
     DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
 
+    bpf_header.version = DEFAULT_VERSION;
+    bpf_header.type = PROGRAM_INJECTION;
+    bpf_header.service = MIGRATION_TYPE;
+    bpf_header.payload_len = 0;
+
+    DBG("opening file...");
+    fp = fopen("/home/filippo/Desktop/migration_ebpf/eBPF-injection/bpfProg/build/prova_bpf_prog", "r");
+
+    if(fp) {
+        DBG("file opened...");
+
+        fseek(fp, 0 , SEEK_END);
+        bpf_header.payload_len = ftell(fp);
+        fseek(fp, 0 , SEEK_SET);// needed for next read from beginning of file
+        message = (uint8_t*)malloc(sizeof(struct bpf_injection_msg_header) + bpf_header.payload_len);
+        memcpy(message, &bpf_header, sizeof(bpf_header));
+	  	bytes_read = fread(message + sizeof(bpf_header), 1, bpf_header.payload_len, fp);
+
+	  	if(bytes_read != bpf_header.payload_len) {
+            DBG("Error preparing the message\n");
+	  		fclose(fp);
+	  		free(message);
+            message = NULL;
+            goto iterate;
+	  	}
+	} else {
+        DBG("file not opened...");
+        goto iterate;
+    }
+
+    if (message) {
+        // setting index to
+        eBPFChardev_instance->migration_byte_to_write_index = sizeof(uint64_t);
+
+        DBG("calling write_bpf_program_into_channel...");
+        if (write_bpf_program_into_channel(message, sizeof(struct bpf_injection_msg_header) + bpf_header.payload_len) < 0)
+            DBG("Error in write_bpf_program_into_channel");
+    }
+
+    free(message);
+    fclose(fp);
+
+    // wait for bpf programs to write free memory info into migration buffer
+    optimize_setup_phase(eBPFChardev_instance);
+    DBG("header payload len: %d, bytes_read %d", (int)bpf_header.payload_len, bytes_read);
+
+    iterate:
     ram_control_before_iterate(f, RAM_CONTROL_SETUP);
     ram_control_after_iterate(f, RAM_CONTROL_SETUP);
 

@@ -30,15 +30,22 @@ struct eBPFChardev {
     FDChardev parent;
     uint32_t last_byte_read;
     QIONetListener *listener;
+    GSource *timer_src;
     SocketAddress *addr;
     uint8_t *buffer;
     QIOChannel *sockets[MAX_SERVICES];
     uint8_t *migration_buffer;
     uint64_t migration_byte_to_read_index;
     uint64_t migration_byte_to_write_index;
+
+    QemuMutex mutex_migration;
+    QemuCond cond_migration;
+    bool ready_to_migrate;
+
 };
 typedef struct eBPFChardev eBPFChardev;
 
 struct eBPFChardev* get_ebpf_chardev(void);
+int write_bpf_program_into_channel(const uint8_t *buffer, int len);
 
 #endif // CHAR_EBPF_H
