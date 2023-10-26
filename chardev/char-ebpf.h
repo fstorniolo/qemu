@@ -26,6 +26,15 @@
 #define DBG(fmt, ...)
 #endif
 
+#if CHAR_EBPF_DEBUG > 1
+#define DBG_V(fmt, ...) do { \
+        fprintf(stderr, "newdev-pci: " fmt "\n", ## __VA_ARGS__); \
+    } while (0)
+#else
+#define DBG_V(fmt, ...) do {} while (0)
+#endif
+
+
 struct eBPFChardev {
     FDChardev parent;
     uint32_t last_byte_read;

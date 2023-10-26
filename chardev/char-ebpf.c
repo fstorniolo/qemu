@@ -79,11 +79,11 @@ int write_bpf_program_into_channel(const uint8_t *buffer, int len)
     struct bpf_injection_msg_header myheader;
     uint8_t* buff_ptr = (uint8_t*)buffer;
 
-    printf("write_bpf_program_into_channel \n");
+    DBG_V("write_bpf_program_into_channel");
 
     memcpy(&myheader, buffer, sizeof(struct bpf_injection_msg_header));
-    printf("Version:%u\n  Type:%u\n  Payload_len:%u\n", myheader.version, myheader.type, myheader.payload_len);
-    printf("eBPFChardev_instance->parent %p, eBPFChardev_instance->parent.ioc_in ptr %p\n", &eBPFChardev_instance->parent, eBPFChardev_instance->parent.ioc_in);
+    DBG_V("Version:%u  Type:%u  Payload_len:%u", myheader.version, myheader.type, myheader.payload_len);
+    DBG_V("eBPFChardev_instance->parent %p, eBPFChardev_instance->parent.ioc_in ptr %p", &eBPFChardev_instance->parent, eBPFChardev_instance->parent.ioc_in);
 
     // return -1;
 
@@ -103,7 +103,7 @@ int write_bpf_program_into_channel(const uint8_t *buffer, int len)
 }
 
 static void char_ebpf_parse(QemuOpts *opts, ChardevBackend *backend, Error **errp){
-    DBG("parse! %d",backend->type);
+    DBG_V("parse! %d",backend->type);
     const char *port = qemu_opt_get(opts, "port");
     const char *host = qemu_opt_get(opts, "host");
 
@@ -169,13 +169,13 @@ static int32_t do_read(QIOChannel *ioc, void *opaque){
     int32_t ret;
 
     ret = qio_channel_read(ioc, (char*)bpf->buffer, sizeof(struct bpf_injection_msg_header), NULL);
-    printf("[header] letti %d\n",ret);
+    DBG_V("[header] letti %d",ret);
 
     if(ret == 0)
         goto handle_close;
 
     if(ret < sizeof(struct bpf_injection_msg_header)){
-        DBG("ouch ouch ouch");
+        DBG("bytes read are less than expected");
         return false;
     }
 
@@ -204,7 +204,7 @@ static int32_t do_read(QIOChannel *ioc, void *opaque){
         to_read -= len;
         buf_ptr += len;
 
-        DBG("Received some data can_read: %d to_read: %d len: %d\n",can_read,to_read,len);
+        DBG_V("Received some data can_read: %d to_read: %d len: %d",can_read,to_read,len);
 
         if(len <= 0)
             goto handle_close;
@@ -216,7 +216,7 @@ static int32_t do_read(QIOChannel *ioc, void *opaque){
 
             written = qio_channel_write(s->ioc_in,(const char*)buffer_ptr,len,NULL);
             if(written <= 0){
-                DBG("WRITTEN <= 0 BOH!\n");
+                DBG("WRITTEN <= 0 BOH!");
                 return false;
             }
 
@@ -246,7 +246,7 @@ gboolean ebpf_client_io(QIOChannel *ioc G_GNUC_UNUSED, GIOCondition condition, v
 gboolean ebpf_client_io(QIOChannel *ioc G_GNUC_UNUSED, GIOCondition condition, void *opaque){
 
     if (condition & (G_IO_HUP | G_IO_ERR)) {
-        printf("vorrei chiudere\n");
+        DBG("vorrei chiudere");
         goto handle_close_io;
     }
 
@@ -254,21 +254,21 @@ gboolean ebpf_client_io(QIOChannel *ioc G_GNUC_UNUSED, GIOCondition condition, v
 
 
     if (condition & G_IO_IN) {
-        printf("vorrei leggere da socket\n");
+        DBG("vorrei leggere da socket");
 
         ret = do_read(ioc,opaque);
         if(ret < 0)
             goto handle_close_io;
 
     } else if (condition & G_IO_OUT) {
-        printf("vorrei scrivere su socket\n");
+        DBG("vorrei scrivere su socket");
     }
 
 
     return TRUE;
 
 handle_close_io:
-    printf("Chiudo socket\n");
+    DBG("Chiudo socket");
     qio_channel_close(ioc, NULL);
 
     return FALSE;
@@ -277,7 +277,7 @@ handle_close_io:
 
 static void tcp_chr_accept(QIONetListener *listener, QIOChannelSocket *cioc, void *opaque){
 
-    DBG("connesso!!! fd: %d",cioc->fd);
+    DBG_V("connesso!!! fd: %d",cioc->fd);
 
     QIOChannel *ioc = QIO_CHANNEL(cioc);
 
@@ -309,7 +309,7 @@ static void char_ebpf_open(Chardev *chr,
 
     *be_opened = true;
 
-    DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
+    DBG_V("eBPFChardev ptr: %p", eBPFChardev_instance);
 
     s->ioc_in = QIO_CHANNEL(qio_channel_buffer_new(4096));
     bpf->listener = qio_net_listener_new();
@@ -320,7 +320,6 @@ static void char_ebpf_open(Chardev *chr,
     *errp = NULL;
 
     if (qio_net_listener_open_sync(bpf->listener, bpf->addr, 1, errp) < 0) {
-        DBG("effess");
         object_unref(OBJECT(bpf->listener));
         bpf->listener = NULL;
         g_free(bpf->addr);
@@ -363,13 +362,13 @@ static void forward_data_to_service(Chardev *s, uint8_t service, const uint8_t *
     eBPFChardev *ebpf = EBPF_CHARDEV(s);
     QIOChannel *channel = find_channel(ebpf,service);
     if(channel == NULL){
-        printf("decisamente strano\n");
+        DBG("decisamente strano");
         return;
     }
     int ret = qio_channel_write(channel,(char*)buf,len,NULL);
 
     if(ret <= 0){
-        printf("problema!\n");
+        DBG("problema!");
     }
 
 }
@@ -382,19 +381,19 @@ static int write_into_migration_buffer(Chardev *s, const uint8_t *buf, int len)
 
     if (payload_len == sizeof(uint64_t)) {
         uint64_t tot_entries = *(uint64_t*)(buf + sizeof(struct bpf_injection_msg_header));
-        DBG("no free pages, total written: %lu", tot_entries);
+        DBG_V("no free pages, total written: %lu", tot_entries);
 
         *(uint64_t*)(ebpf->migration_buffer) = tot_entries;
 
         // waking up migration thread
-        DBG("Requesting mutex_migration");
+        DBG_V("Requesting mutex_migration");
         qemu_mutex_lock(&ebpf->mutex_migration);
-        DBG("Inside mutex_migration");
+        DBG_V("Inside mutex_migration");
 
         ebpf->ready_to_migrate = true;
         qemu_cond_signal(&ebpf->cond_migration);
         qemu_mutex_unlock(&ebpf->mutex_migration);
-        DBG("Releasing mutex_migration");
+        DBG_V("Releasing mutex_migration");
 
         return len;
     }
@@ -426,13 +425,13 @@ static int char_ebpf_write(Chardev *s, const uint8_t *buf, int len){
         //uint8_t *payload = buf + sizeof(header_ptr);
 
         if(service == VCPU_PINNING_TYPE){
-            DBG("vcpu");
+            DBG_V("vcpu");
 
         } else if(service == DYNAMIC_MEM_TYPE){
-            DBG("memory");
+            DBG_V("memory");
             //dynamic_memory(newdev,payload,size);
         } else if(service == FIREWALL_TYPE){
-            DBG("firewall");
+            DBG_V("firewall");
             //firewall_op(newdev,payload,size);
         } else if(service == MIGRATION_TYPE){
             // DBG("migration");
@@ -443,8 +442,6 @@ static int char_ebpf_write(Chardev *s, const uint8_t *buf, int len){
 
     forward_data_to_service(s,header_ptr->service,buf,len);
 
-
-    //DBG("write!");
     return len;
 }
 
@@ -472,7 +469,7 @@ static gboolean leggi(QIOChannel *chan, GIOCondition cond, void *opaque)
     int len;
     uint8_t buf[CHR_READ_BUF_LEN];
 
-    DBG("leggi is called");
+    DBG_V("leggi is called");
 
     len = sizeof(buf);
     if (len > s->max_size) {
@@ -506,7 +503,7 @@ static gboolean leggi(QIOChannel *chan, GIOCondition cond, void *opaque)
     memcpy(buf,buffer,len);
     ebpf->last_byte_read += len;
 
-    printf("Provo a leggere %d, Letti %d da channel read\n",len,len);
+    DBG_V("Provo a leggere %d, Letti %d da channel read",len,len);
 
     qemu_chr_be_write(chr, buf, len);
 
@@ -534,7 +531,7 @@ static void chr_ebpf_update_read_handler(Chardev *chr){
 static void chr_ebpf_set_fe_open(Chardev *chr, int fe_open){
 
     if(fe_open){
-        printf("set open event\n");
+        DBG("set open event");
         //qemu_chr_be_event(chr, CHR_EVENT_OPENED);
     }
 

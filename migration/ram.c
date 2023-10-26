@@ -3197,25 +3197,28 @@ typedef struct {
 
 static void optimize_setup_phase(eBPFChardev *p)
 {
+    uint64_t start, stop;
+    DBG_V("Inside optimize_setup_phase");
+    start = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
 
-    DBG("Inside optimize_setup_phase");
-
-    DBG("Requesting thr_mutex_migration");
+    DBG_V("Requesting thr_mutex_migration");
     qemu_mutex_lock(&p->mutex_migration);
-    DBG("Inside thr_mutex_migration, waiting for condition");
+    DBG_V("Inside thr_mutex_migration, waiting for condition");
 
 
     while (!p->ready_to_migrate)
         qemu_cond_wait(&p->cond_migration, &p->mutex_migration);
 
-    DBG("ready_to_migration true");
+    DBG_V("ready_to_migration true");
 
     qemu_mutex_unlock(&p->mutex_migration);
+    stop = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    DBG("migration thread has slept for %lu ns \n", stop-start);
 
-    DBG("Unlock mutex migration");
+    DBG_V("Unlock mutex migration");
     uint64_t counter =  *(uint64_t*)p->migration_buffer;
 
-    DBG("optimize_setup_phase: counter is %lu", counter);
+    DBG_V("optimize_setup_phase: counter is %lu", counter);
 
     migration_metadata_t *migration_metadata = (migration_metadata_t*)(p->migration_buffer + sizeof(uint64_t));
     void *hva;
@@ -3227,19 +3230,10 @@ static void optimize_setup_phase(eBPFChardev *p)
         qemu_guest_free_page_hint(hva, (4 * 1024) << migration_metadata[i].order);
     }
 
-    DBG("Computation ended");
+    stop = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+    DBG("optimize_setup_phase has lasted for %lu ns \n", stop-start);
 
-    // DBG_V("Requesting thr_mutex_end_1st_round_migration");
-
-    // qemu_mutex_lock(&newdev->thr_mutex_end_1st_round_migration);
-    // DBG_V("Inside thr_mutex_end_1st_round_migration");
-
-    // newdev->end_1st_round_migration = true;
-    // qemu_cond_signal(&newdev->thr_cond_end_1st_round_migration);
-    // qemu_mutex_unlock(&newdev->thr_mutex_end_1st_round_migration);
-
-    // DBG("Setup Migration Phase Ended, communicating it to the device \n");
-    // setup_migration_phase_ended();
+    DBG_V("Computation ended");
 }
 
 /*
@@ -3304,18 +3298,18 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
     //     goto iterate;
 
     eBPFChardev_instance = get_ebpf_chardev();
-    DBG("eBPFChardev ptr: %p", eBPFChardev_instance);
+    DBG_V("eBPFChardev ptr: %p", eBPFChardev_instance);
 
     bpf_header.version = DEFAULT_VERSION;
     bpf_header.type = PROGRAM_INJECTION;
     bpf_header.service = MIGRATION_TYPE;
     bpf_header.payload_len = 0;
 
-    DBG("opening file...");
+    DBG_V("opening file...");
     fp = fopen("/home/filippo/Desktop/migration_ebpf/eBPF-injection/bpfProg/build/prova_bpf_prog", "r");
 
     if(fp) {
-        DBG("file opened...");
+        DBG_V("file opened...");
 
         fseek(fp, 0 , SEEK_END);
         bpf_header.payload_len = ftell(fp);
@@ -3340,7 +3334,7 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
         // setting index to
         eBPFChardev_instance->migration_byte_to_write_index = sizeof(uint64_t);
 
-        DBG("calling write_bpf_program_into_channel...");
+        DBG_V("calling write_bpf_program_into_channel...");
         if (write_bpf_program_into_channel(message, sizeof(struct bpf_injection_msg_header) + bpf_header.payload_len) < 0)
             DBG("Error in write_bpf_program_into_channel");
     }
@@ -3350,7 +3344,7 @@ static int ram_save_setup(QEMUFile *f, void *opaque)
 
     // wait for bpf programs to write free memory info into migration buffer
     optimize_setup_phase(eBPFChardev_instance);
-    DBG("header payload len: %d, bytes_read %d", (int)bpf_header.payload_len, bytes_read);
+    DBG_V("header payload len: %d, bytes_read %d", (int)bpf_header.payload_len, bytes_read);
 
     iterate:
     ram_control_before_iterate(f, RAM_CONTROL_SETUP);
